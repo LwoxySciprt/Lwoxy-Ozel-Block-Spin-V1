@@ -1,0 +1,544 @@
+-- Blockspin Minimal Cheat
+-- v4.0 - CFrame Aimbot Fix + Tiklanabilir GUI + Skeleton ESP
+
+--═══════════════════════════════════════════════════════════════
+-- TEMIZLIK
+--═══════════════════════════════════════════════════════════════
+if getgenv().__BSL then pcall(getgenv().__BSC) task.wait(0.3) end
+getgenv().__BSL = true
+
+--═══════════════════════════════════════════════════════════════
+-- SERVISLER
+--═══════════════════════════════════════════════════════════════
+local Players = game:GetService("Players")
+local RS = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local LP = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+--═══════════════════════════════════════════════════════════════
+-- CONFIG
+--═══════════════════════════════════════════════════════════════
+local CFG = {
+    ESP = true,
+    ESP_Col = Color3.fromRGB(255, 255, 255),
+    ESP_Th = 1.5,
+
+    Aim = true,
+    FOV = 200,
+    Smooth = 3, -- 1 = anlik snap, yuksel = yavas
+    TeamCheck = false,
+
+    Blacklist = {},
+}
+
+--═══════════════════════════════════════════════════════════════
+-- DEGISKENLER
+--═══════════════════════════════════════════════════════════════
+local MenuOn = true
+local AimHold = false
+local Target = nil
+local ESP = {}
+local GUI = {}
+local BTN = {}
+local CON = {}
+
+--═══════════════════════════════════════════════════════════════
+-- KEMIK HARITASI
+--═══════════════════════════════════════════════════════════════
+local R15B = {
+    {"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
+    {"UpperTorso","LeftUpperArm"},{"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},
+    {"UpperTorso","RightUpperArm"},{"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},
+    {"LowerTorso","LeftUpperLeg"},{"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"},
+    {"LowerTorso","RightUpperLeg"},{"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"},
+}
+local R6B = {
+    {"Head","Torso"},{"Torso","Left Arm"},{"Torso","Right Arm"},
+    {"Torso","Left Leg"},{"Torso","Right Leg"},
+}
+
+--═══════════════════════════════════════════════════════════════
+-- YARDIMCI
+--═══════════════════════════════════════════════════════════════
+local function W2S(p)
+    local v, o = Camera:WorldToViewportPoint(p)
+    return Vector2.new(v.X, v.Y), o, v.Z
+end
+
+local function Ctr()
+    local s = Camera.ViewportSize
+    return Vector2.new(s.X/2, s.Y/2)
+end
+
+local function Alive(p)
+    if not p or p == LP then return false end
+    local c = p.Character
+    if not c then return false end
+    local h = c:FindFirstChildWhichIsA("Humanoid")
+    if not h or h.Health <= 0 then return false end
+    if not c:FindFirstChild("HumanoidRootPart") then return false end
+    if not c:FindFirstChild("Head") then return false end
+    return true
+end
+
+local function Valid(p)
+    if not Alive(p) then return false end
+    for _, n in pairs(CFG.Blacklist) do
+        if p.Name == n or p.DisplayName == n then return false end
+    end
+    if CFG.TeamCheck and p.Team and LP.Team and p.Team == LP.Team then return false end
+    return true
+end
+
+local function GetBones(c)
+    if c:FindFirstChild("UpperTorso") then return R15B end
+    if c:FindFirstChild("Torso") then return R6B end
+    return nil
+end
+
+--═══════════════════════════════════════════════════════════════
+-- BILDIRIM
+--═══════════════════════════════════════════════════════════════
+local function Notify(msg, dur)
+    dur = dur or 2
+    local cx = Camera.ViewportSize.X / 2
+    local b = Drawing.new("Square")
+    b.Size = Vector2.new(270, 28)
+    b.Position = Vector2.new(cx-135, 10)
+    b.Color = Color3.fromRGB(18,18,28)
+    b.Filled = true; b.Transparency = 0.92; b.Visible = true; b.ZIndex = 300
+    local t = Drawing.new("Text")
+    t.Text = msg; t.Size = 13; t.Font = Drawing.Fonts.Plex
+    t.Color = Color3.fromRGB(200,200,255); t.Center = true
+    t.Outline = true; t.OutlineColor = Color3.new(0,0,0)
+    t.Position = Vector2.new(cx, 17); t.Visible = true; t.ZIndex = 301
+    task.delay(dur, function()
+        pcall(function() b:Remove() end)
+        pcall(function() t:Remove() end)
+    end)
+end
+
+--═══════════════════════════════════════════════════════════════
+-- FOV DAIRESI
+--═══════════════════════════════════════════════════════════════
+local FOVC = Drawing.new("Circle")
+FOVC.Radius = CFG.FOV; FOVC.Color = Color3.fromRGB(255,255,255)
+FOVC.Thickness = 1; FOVC.Filled = false; FOVC.NumSides = 60
+FOVC.Visible = CFG.Aim; FOVC.Transparency = 0.6; FOVC.ZIndex = 10
+
+--═══════════════════════════════════════════════════════════════
+-- SKELETON ESP
+--═══════════════════════════════════════════════════════════════
+local function MkESP(p)
+    if ESP[p] then return end
+    local l = {}
+    for i = 1, 14 do
+        local d = Drawing.new("Line")
+        d.Thickness = CFG.ESP_Th; d.Color = CFG.ESP_Col
+        d.Visible = false; d.ZIndex = 5
+        l[i] = d
+    end
+    ESP[p] = l
+end
+
+local function RmESP(p)
+    if not ESP[p] then return end
+    for _, l in pairs(ESP[p]) do pcall(function() l:Remove() end) end
+    ESP[p] = nil
+end
+
+local function UpESP(p)
+    local lines = ESP[p]
+    if not lines then return end
+    if p == LP or not CFG.ESP or not Alive(p) then
+        for _, l in pairs(lines) do l.Visible = false end
+        return
+    end
+    local c = p.Character
+    local bones = GetBones(c)
+    if not bones then
+        for _, l in pairs(lines) do l.Visible = false end
+        return
+    end
+    for i, l in pairs(lines) do
+        local b = bones[i]
+        if not b then l.Visible = false
+        else
+            local a = c:FindFirstChild(b[1])
+            local bb = c:FindFirstChild(b[2])
+            if a and bb then
+                local sa, oa = W2S(a.Position)
+                local sb, ob = W2S(bb.Position)
+                if oa and ob then
+                    l.From = sa; l.To = sb
+                    l.Color = CFG.ESP_Col; l.Thickness = CFG.ESP_Th
+                    l.Visible = true
+                else l.Visible = false end
+            else l.Visible = false end
+        end
+    end
+end
+
+--═══════════════════════════════════════════════════════════════
+-- AIMBOT - CFRAME METHOD (HER EXECUTORDA CALISIR)
+-- Sag tik basili tutunca en yakin oyuncunun Head kismina
+-- kamera dondirilir. Smooth ile yavas/hizli ayarlanir.
+--═══════════════════════════════════════════════════════════════
+local function FindClosest()
+    local ctr = Ctr()
+    local best, bestD = nil, CFG.FOV
+
+    for _, p in pairs(Players:GetPlayers()) do
+        if not Valid(p) then continue end
+
+        local head = p.Character and p.Character:FindFirstChild("Head")
+        if not head then continue end
+
+        local sp, onScr, z = W2S(head.Position)
+        if not onScr or z < 1 then continue end
+
+        local d = (sp - ctr).Magnitude
+        if d < bestD then
+            bestD = d
+            best = p
+        end
+    end
+    return best
+end
+
+local function DoAim()
+    if not CFG.Aim or not AimHold then
+        Target = nil
+        return
+    end
+
+    -- Kendi karakterimiz var mi kontrol et
+    local myChar = LP.Character
+    if not myChar then Target = nil return end
+    local myHead = myChar:FindFirstChild("Head")
+    if not myHead then Target = nil return end
+
+    -- En yakin hedefi bul
+    local tgt = FindClosest()
+    Target = tgt
+    if not tgt then return end
+
+    local tgtChar = tgt.Character
+    if not tgtChar then return end
+    local tgtHead = tgtChar:FindFirstChild("Head")
+    if not tgtHead then return end
+
+    -- Kameranin su anki pozisyonu
+    local camPos = Camera.CFrame.Position
+
+    -- Hedefin Head pozisyonu
+    local tgtPos = tgtHead.Position
+
+    -- Hedefe dogru CFrame hesapla
+    local targetCF = CFrame.lookAt(camPos, tgtPos)
+
+    -- Smooth uygula: 1 = anlik, yuksek = yavas
+    -- Lerp ile yumusak gecis
+    local alpha = 1 / math.clamp(CFG.Smooth, 1, 50)
+
+    -- Kamerayi hedefe dondur
+    Camera.CFrame = Camera.CFrame:Lerp(targetCF, alpha)
+end
+
+--═══════════════════════════════════════════════════════════════
+-- TIKLANABILIR GUI
+--═══════════════════════════════════════════════════════════════
+local PX, PY, PW = 14, 170, 235
+
+local function DR(x,y,w,h,c,f,z)
+    local r = Drawing.new("Square")
+    r.Position = Vector2.new(x,y); r.Size = Vector2.new(w,h)
+    r.Color = c; r.Filled = f; r.Visible = true; r.ZIndex = z or 50
+    if not f then r.Thickness = 1 end
+    return r
+end
+
+local function DT(x,y,t,s,c,z)
+    local d = Drawing.new("Text")
+    d.Position = Vector2.new(x,y); d.Text = t or ""
+    d.Size = s or 13; d.Font = Drawing.Fonts.Plex
+    d.Color = c or Color3.fromRGB(210,210,225)
+    d.Outline = true; d.OutlineColor = Color3.new(0,0,0)
+    d.Visible = true; d.ZIndex = z or 55
+    return d
+end
+
+local function DL(x1,y1,x2,y2,c,th,z)
+    local l = Drawing.new("Line")
+    l.From = Vector2.new(x1,y1); l.To = Vector2.new(x2,y2)
+    l.Color = c; l.Thickness = th or 1; l.Visible = true; l.ZIndex = z or 52
+    return l
+end
+
+-- Toggle butonu
+local function MkBtn(label, yOff, fn)
+    local bx, by, bw, bh = PX+8, PY+yOff, PW-16, 24
+    local bg = DR(bx,by,bw,bh, Color3.fromRGB(30,30,42), true, 51)
+    bg.Transparency = 0.8
+    local box = DR(bx+4, by+4, 16, 16, Color3.fromRGB(60,60,80), false, 56)
+    local fill = DR(bx+7, by+7, 10, 10, Color3.fromRGB(80,255,120), true, 57)
+    local txt = DT(bx+26, by+4, label, 13, nil, 56)
+    local val = DT(bx+bw-40, by+4, "", 13, nil, 56)
+    local b = {bg=bg,box=box,fill=fill,txt=txt,val=val, x=bx,y=by,w=bw,h=bh, fn=fn, type="toggle"}
+    table.insert(BTN, b)
+    return b
+end
+
+-- Slider butonu ([-] ve [+])
+local function MkSld(label, yOff, fnL, fnR)
+    local bx, by, bw, bh = PX+8, PY+yOff, PW-16, 24
+    local bg = DR(bx,by,bw,bh, Color3.fromRGB(30,30,42), true, 51)
+    bg.Transparency = 0.8
+    local mb = DR(bx+4, by+3, 18, 18, Color3.fromRGB(255,80,80), true, 57)
+    local mt = DT(bx+9, by+3, "-", 13, Color3.fromRGB(255,255,255), 58)
+    local txt = DT(bx+28, by+4, label, 13, nil, 56)
+    local val = DT(bx+bw-65, by+4, "", 13, Color3.fromRGB(200,200,255), 56)
+    local pb = DR(bx+bw-22, by+3, 18, 18, Color3.fromRGB(80,255,120), true, 57)
+    local pt = DT(bx+bw-17, by+3, "+", 13, Color3.fromRGB(0,0,0), 58)
+    local s = {
+        bg=bg, mb=mb, mt=mt, pb=pb, pt=pt, txt=txt, val=val,
+        x=bx, y=by, w=bw, h=bh,
+        mA={x=bx+4,y=by+3,w=18,h=18,fn=fnL},
+        pA={x=bx+bw-22,y=by+3,w=18,h=18,fn=fnR},
+        type="slider"
+    }
+    table.insert(BTN, s)
+    return s
+end
+
+local function Build()
+    local ac = Color3.fromRGB(130,100,255)
+    local totalH = 290
+
+    GUI.bg = DR(PX,PY,PW,totalH, Color3.fromRGB(16,16,22), true, 49)
+    GUI.bg.Transparency = 0.94
+    GUI.bd = DR(PX,PY,PW,totalH, Color3.fromRGB(40,40,55), false, 50)
+    GUI.tl = DL(PX,PY,PX+PW,PY, ac, 2, 52)
+    GUI.tt = DT(PX+10, PY+6, "Blockspin Minimal", 15, ac, 56)
+    GUI.s1 = DL(PX+8, PY+26, PX+PW-8, PY+26, Color3.fromRGB(45,45,60))
+
+    -- Toggle butonlari
+    GUI.bESP = MkBtn("Skeleton ESP", 32, function()
+        CFG.ESP = not CFG.ESP
+        Notify("ESP: "..(CFG.ESP and "ON" or "OFF"), 1.5)
+    end)
+
+    GUI.bAim = MkBtn("Aimbot", 60, function()
+        CFG.Aim = not CFG.Aim
+        FOVC.Visible = CFG.Aim
+        Notify("Aimbot: "..(CFG.Aim and "ON" or "OFF"), 1.5)
+    end)
+
+    GUI.bTeam = MkBtn("Team Check", 88, function()
+        CFG.TeamCheck = not CFG.TeamCheck
+        Notify("Team: "..(CFG.TeamCheck and "ON" or "OFF"), 1.5)
+    end)
+
+    GUI.s2 = DL(PX+8, PY+118, PX+PW-8, PY+118, Color3.fromRGB(45,45,60))
+
+    -- Slider butonlari
+    GUI.sFOV = MkSld("FOV", 124,
+        function() CFG.FOV = math.max(30, CFG.FOV-20); FOVC.Radius = CFG.FOV; Notify("FOV: "..CFG.FOV, 0.8) end,
+        function() CFG.FOV = math.min(500, CFG.FOV+20); FOVC.Radius = CFG.FOV; Notify("FOV: "..CFG.FOV, 0.8) end
+    )
+
+    GUI.sSm = MkSld("Smooth", 152,
+        function() CFG.Smooth = math.max(1, CFG.Smooth-1); Notify("Smooth: "..CFG.Smooth, 0.8) end,
+        function() CFG.Smooth = math.min(30, CFG.Smooth+1); Notify("Smooth: "..CFG.Smooth, 0.8) end
+    )
+
+    GUI.s3 = DL(PX+8, PY+182, PX+PW-8, PY+182, Color3.fromRGB(45,45,60))
+
+    GUI.tgt = DT(PX+10, PY+188, "Target: ---", 12, Color3.fromRGB(110,110,135), 55)
+    GUI.bl = DT(PX+10, PY+205, "Blacklist: (bos)", 11, Color3.fromRGB(100,100,120), 55)
+    GUI.k1 = DT(PX+10, PY+230, "[RCtrl] Menu Ac/Kapa", 10, Color3.fromRGB(70,70,90), 55)
+    GUI.k2 = DT(PX+10, PY+243, "[Sag Tik Basili Tut] = Aimbot", 10, Color3.fromRGB(70,70,90), 55)
+    GUI.k3 = DT(PX+10, PY+256, "Tiklayarak ac/kapa", 10, Color3.fromRGB(70,70,90), 55)
+    GUI.k4 = DT(PX+10, PY+269, "[-][+] FOV/Smooth ayarla", 10, Color3.fromRGB(70,70,90), 55)
+end
+
+local function UpdGUI()
+    local g = Color3.fromRGB(80,255,120)
+    local r = Color3.fromRGB(255,60,60)
+
+    GUI.bESP.fill.Color = CFG.ESP and g or r
+    GUI.bESP.val.Text = CFG.ESP and "ON" or "OFF"
+    GUI.bESP.val.Color = CFG.ESP and g or r
+
+    GUI.bAim.fill.Color = CFG.Aim and g or r
+    GUI.bAim.val.Text = CFG.Aim and "ON" or "OFF"
+    GUI.bAim.val.Color = CFG.Aim and g or r
+
+    GUI.bTeam.fill.Color = CFG.TeamCheck and g or r
+    GUI.bTeam.val.Text = CFG.TeamCheck and "ON" or "OFF"
+    GUI.bTeam.val.Color = CFG.TeamCheck and g or r
+
+    GUI.sFOV.val.Text = tostring(math.floor(CFG.FOV))
+    GUI.sSm.val.Text = tostring(CFG.Smooth)
+
+    if Target and Target.Parent then
+        GUI.tgt.Text = "Target: "..Target.Name
+        GUI.tgt.Color = Color3.fromRGB(255,200,60)
+    else
+        GUI.tgt.Text = "Target: ---"
+        GUI.tgt.Color = Color3.fromRGB(110,110,135)
+    end
+
+    if #CFG.Blacklist > 0 then
+        local s = table.concat(CFG.Blacklist, ", ")
+        if #s > 28 then s = s:sub(1,28).."..." end
+        GUI.bl.Text = "Blacklist: "..s
+    else
+        GUI.bl.Text = "Blacklist: (bos)"
+    end
+end
+
+local function ShowGUI(v)
+    for _, o in pairs(GUI) do
+        if typeof(o) == "table" and o.bg then
+            for _, s in pairs(o) do
+                if typeof(s) ~= "function" and typeof(s) ~= "number" and typeof(s) ~= "string" and typeof(s) ~= "table" then
+                    pcall(function() s.Visible = v end)
+                end
+            end
+        else
+            pcall(function() o.Visible = v end)
+        end
+    end
+end
+
+--═══════════════════════════════════════════════════════════════
+-- TIKLANMA
+--═══════════════════════════════════════════════════════════════
+local function InRect(mx,my,rx,ry,rw,rh)
+    return mx>=rx and mx<=rx+rw and my>=ry and my<=ry+rh
+end
+
+local function Click(mx,my)
+    if not MenuOn then return end
+    for _, b in pairs(BTN) do
+        if b.type == "slider" then
+            if InRect(mx,my, b.mA.x,b.mA.y,b.mA.w,b.mA.h) then pcall(b.mA.fn) return end
+            if InRect(mx,my, b.pA.x,b.pA.y,b.pA.w,b.pA.h) then pcall(b.pA.fn) return end
+        elseif b.type == "toggle" then
+            if InRect(mx,my, b.x,b.y,b.w,b.h) then pcall(b.fn) return end
+        end
+    end
+end
+
+--═══════════════════════════════════════════════════════════════
+-- INPUT
+--═══════════════════════════════════════════════════════════════
+CON[#CON+1] = UIS.InputBegan:Connect(function(inp, gp)
+    -- Sag tik - aimbot hold (HER ZAMAN calismali)
+    if inp.UserInputType == Enum.UserInputType.MouseButton2 then
+        AimHold = true
+    end
+
+    -- Sol tik - GUI butonlari
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 and not gp then
+        local m = UIS:GetMouseLocation()
+        Click(m.X, m.Y)
+    end
+
+    if gp then return end
+
+    -- Menu toggle
+    if inp.KeyCode == Enum.KeyCode.RightControl then
+        MenuOn = not MenuOn
+        ShowGUI(MenuOn)
+        Notify("Menu: "..(MenuOn and "ACIK" or "KAPALI"), 1.5)
+    end
+end)
+
+CON[#CON+1] = UIS.InputEnded:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton2 then
+        AimHold = false
+        Target = nil
+    end
+end)
+
+--═══════════════════════════════════════════════════════════════
+-- OYUNCU
+--═══════════════════════════════════════════════════════════════
+local function Setup(p)
+    if p == LP then return end
+    MkESP(p)
+    CON[#CON+1] = p.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        RmESP(p)
+        MkESP(p)
+    end)
+end
+
+for _, p in pairs(Players:GetPlayers()) do Setup(p) end
+CON[#CON+1] = Players.PlayerAdded:Connect(Setup)
+CON[#CON+1] = Players.PlayerRemoving:Connect(RmESP)
+
+--═══════════════════════════════════════════════════════════════
+-- BLACKLIST
+--═══════════════════════════════════════════════════════════════
+getgenv().AddToBlacklist = function(n)
+    for _, v in pairs(CFG.Blacklist) do if v==n then Notify(n.." zaten var",2) return end end
+    table.insert(CFG.Blacklist, n); Notify(n.." eklendi",2)
+end
+getgenv().RemoveFromBlacklist = function(n)
+    for i,v in pairs(CFG.Blacklist) do
+        if v==n then table.remove(CFG.Blacklist,i); Notify(n.." cikarildi",2) return end
+    end
+    Notify(n.." bulunamadi",2)
+end
+getgenv().ClearBlacklist = function() CFG.Blacklist={}; Notify("Temizlendi",2) end
+
+--═══════════════════════════════════════════════════════════════
+-- GUI OLUSTUR
+--═══════════════════════════════════════════════════════════════
+Build()
+
+--═══════════════════════════════════════════════════════════════
+-- ANA DONGU
+--═══════════════════════════════════════════════════════════════
+local fc = 0
+CON[#CON+1] = RS.RenderStepped:Connect(function()
+    fc = fc + 1
+    Camera = workspace.CurrentCamera
+
+    FOVC.Position = Ctr()
+    FOVC.Radius = CFG.FOV
+    FOVC.Visible = CFG.Aim
+
+    -- AIMBOT CALISTIR
+    DoAim()
+
+    -- ESP
+    for p,_ in pairs(ESP) do
+        if p and p.Parent then UpESP(p) else RmESP(p) end
+    end
+
+    -- GUI (her 3 frame)
+    if fc%3==0 and MenuOn then UpdGUI() end
+end)
+
+--═══════════════════════════════════════════════════════════════
+-- TEMIZLIK
+--═══════════════════════════════════════════════════════════════
+getgenv().__BSC = function()
+    for _, c in pairs(CON) do pcall(function() c:Disconnect() end) end
+    CON = {}
+    for p,_ in pairs(ESP) do RmESP(p) end
+    pcall(function() FOVC:Remove() end)
+    for _, o in pairs(GUI) do
+        if typeof(o)=="table" then
+            for _, s in pairs(o) do pcall(function() s:Remove() end) end
+        else pcall(function() o:Remove() end) end
+    end
+    GUI={}; BTN={}; getgenv().__BSL=false
+end
+
+Notify("Blockspin v4 yuklendi! Sag tik basili tut = Aimbot", 3)
